@@ -1,17 +1,52 @@
 class UserController {
 
-    constructor(formId, tableId) {
-        this.formEl = document.getElementById(formId);
+    constructor(formIdCreate, formIdUpdate, tableId) {
+        this.formEl = document.getElementById(formIdCreate);
+        this.formUpdateEl = document.getElementById(formIdUpdate);
         this.tableEl = document.getElementById(tableId);
         this.onSubmit();
         this.onEditCancel();
+        this.selectAll();
     }
 
     onEditCancel() {
         document.querySelector('#box-user-update .btn-cancel').addEventListener('click', e => {
             this.showPanelCreate();
         });
+        this.formUpdateEl.addEventListener('submit', event => {
+            event.preventDefault();
+            let btn = this.formUpdateEl.querySelector("[type=submit]");
+            btn.disabled = true;
+            let values = this.getValues(this.formUpdateEl);
+            let index = this.formUpdateEl.dataset.trIndex;
+            let tr = this.tableEl.rows[index];
+            let userOld = JSON.parse(tr.dataset.user);
+            //Object.assign -> Copia o valor de atributos de um objeto. CRia um objeto destino, retornando este objeto
+            //objto da direita sobrescreve o da esquerda
+            let result = Object.assign({}, userOld, values);
+
+            this.getPhoto(this.formUpdateEl).then(content => {
+                if (!values.photo) {
+                    result._photo = userOld._photo;
+                } else {
+                    result._photo = content;
+                }
+                let user = new User();
+                user.loadFromJSON(result);
+                user.save();
+                this.getTR(user, tr);
+                this.updateCount();
+                //Limpa formulário
+                this.formUpdateEl.reset();
+                btn.disabled = false;
+                this.showPanelCreate();
+
+            }, (e) => {
+                console.log(e);
+            });
+        });
     }
+
     showPanelCreate() {
         document.querySelector('#box-user-create').style.display = "block";
         document.querySelector('#box-user-update').style.display = "none";
@@ -30,13 +65,14 @@ class UserController {
 
             let btnSubmit = this.formEl.querySelector("[type=submit]");
             btnSubmit.disabled = true;
-            let values = this.getValues();
+            let values = this.getValues(this.formEl);
 
             if (!values) return false;
 
-            this.getPhoto().then(content => {
+            this.getPhoto(this.formEl).then(content => {
                 //recebe conteudo do arquivo
                 values.photo = content;
+                values.save();
                 this.addLine(values);
                 //Limpa formulário
                 this.formEl.reset();
@@ -48,13 +84,13 @@ class UserController {
         });
     }
 
-    getPhoto() {
+    getPhoto(formEl) {
         //(Promisse) É uma intenção, uma promessa, executa uma ação assíncrona
         return new Promise((resolve, reject) => {
             // FileReader => Útil para ler e manipular arquivos e pastas
             let fileReader = new FileReader
 
-            let elements = [...this.formEl.elements].filter(item => {
+            let elements = [...formEl.elements].filter(item => {
                 if (item.name === 'photo') {
                     return item;
                 }
@@ -76,7 +112,7 @@ class UserController {
         });
     }
 
-    getValues() {
+    getValues(formEl) {
 
         let user = {};
 
@@ -84,13 +120,15 @@ class UserController {
 
         //Spread expressão esperando múltiplos parâmetros
         // o uso das reticências significa que eu não preciso informar quantos indices existem
-        [...this.formEl.elements].forEach(function (field, index) {
+        [...formEl.elements].forEach(function (field, index) {
             if (['name', 'email', 'password'].indexOf(field.name) > -1 && !field.value) {
                 field.parentElement.classList.add('has-error');
                 isValid = false;
             }
-            if (field.name == "gender" && field.checked) {
-                user[field.name] = field.value;
+            if (field.name == "gender") {
+                if (field.checked) {
+                    user[field.name] = field.value;
+                }
             } else if (field.name == "admin") {
                 user[field.name] = field.checked;
             } else {
@@ -114,37 +152,85 @@ class UserController {
 
     }
 
-    addLine(dataUser) {
-        let tr = document.createElement('tr');
+    selectAll() {
+        let users = User.getUserStorage();
 
+        users.forEach(dataUser => {
+            let user = new User();
+            user.loadFromJSON(dataUser);
+            this.addLine(user);
+        });
+    }
+
+    addLine(dataUser) {
+        let tr = this.getTR(dataUser);
+        this.tableEl.appendChild(tr);
+        this.updateCount();
+    }
+
+    //Valor Padrão. O comando = é utilizado para torna-lo opcional
+    getTR(dataUser, tr = null) {
+        if (tr === null) tr = document.createElement('tr');
         //Serialização - Transformar um objeto em texto
         tr.dataset.user = JSON.stringify(dataUser);
 
         tr.innerHTML = `
-            <td><img src="${dataUser.photo}" alt="User Image" class="img-circle img-sm"></td>
-            <td>${dataUser.name}</td>
-            <td>${dataUser.email}</td>
-            <td>${(dataUser.admin) ? 'Sim' : 'Não'}</td>
-            <td>${dataUser.register.toLocaleDateString()}</td>
-            <td>
-            <button type="button" class="btn btn-primary btn-edit btn-xs btn-flat">Editar</button>
-            <button type="button" class="btn btn-danger btn-xs btn-flat">Excluir</button>
-            </td>
-        `;
+        <td><img src="${dataUser.photo}" alt="User Image" class="img-circle img-sm"></td>
+        <td>${dataUser.name}</td>
+        <td>${dataUser.email}</td>
+        <td>${(dataUser.admin) ? 'Sim' : 'Não'}</td>
+        <td>${dataUser.register.toLocaleDateString()}</td>
+        <td>
+        <button type="button" class="btn btn-primary btn-edit btn-xs btn-flat">Editar</button>
+        <button type="button" class="btn btn-danger btn-delete btn-xs btn-flat">Excluir</button>
+        </td>
+    `;
+        this.addEventsTR(tr);
+        return tr;
+    }
 
-        tr.querySelector(".btn-edit").addEventListener('click', e => {
-            JSON.parse(tr.dataset.user);
-            this.showPanelUpdate();
+    addEventsTR(tr) {
+        tr.querySelector(".btn-delete").addEventListener('click', e => {
+            if (confirm('Are you sure you want to delete?')) {
+                let user = new User();
+                user.loadFromJSON(JSON.parse(tr.dataset.user));
+                user.delete();
+                tr.remove();
+                this.updateCount();
+            }
         });
 
-        this.tableEl.appendChild(tr);
+        tr.querySelector(".btn-edit").addEventListener('click', e => {
+            let json = JSON.parse(tr.dataset.user);
+            this.formUpdateEl.dataset.trIndex = tr.sectionRowIndex;
 
-        this.updateCount();
+            for (let name in json) {
+                let field = this.formUpdateEl.querySelector("[name= " + name.replace("_", "") + "]");
+
+                if (field) {
+                    switch (field.type) {
+                        case 'file':
+                            continue;
+                            break;
+                        case 'radio':
+                            field = this.formUpdateEl.querySelector("[name= " + name.replace("_", "") + "][value=" + json[name] + "]");
+                            field.checked = true;
+                            break;
+                        case 'checkbox':
+                            field.checked = json[name];
+                            break;
+                        default:
+                            field.value = json[name];
+                    }
+                }
+            }
+            this.formUpdateEl.querySelector(".photo").src = json._photo;
+            this.showPanelUpdate();
+        });
     }
 
     updateCount() {
         //DataSet - faz parte da API Web permite leitura e escrita em elementos com data-
-
         let numberUsers = 0;
         let numberAdmins = 0;
         [...this.tableEl.children].forEach(tr => {
